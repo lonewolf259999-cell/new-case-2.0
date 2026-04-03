@@ -4,7 +4,7 @@ const keys = require('./credentials.json');
 // นำ const config = require('./config.json'); ออกแล้ว
 
 async function runManualCount(interaction, config) { // เพิ่ม parameter config
-    await interaction.deferReply({ ephemeral: true });
+    // await interaction.deferReply({ ephemeral: true });
     console.log('🧹 เริ่มประมวลผลข้อมูลจาก Google Sheets Config...');
 
     try {
