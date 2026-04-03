@@ -104,20 +104,30 @@ function getTagsFromContent(message) {
     if (!message || !message.content) return [];
     let tagList = [];
     const content = message.content.trim();
+
+    // 1. ระบบแท็ก (Discord Mentions)
     const mentionRegex = /<@!?(\d+)>/g;
     let match;
     while ((match = mentionRegex.exec(content)) !== null) {
         const member = message.guild.members.cache.get(match[1]);
         if (member) addPersonToList(tagList, member);
     }
+
+    // 2. ระบบพิมพ์ 'by 0 00 000'
     const words = content.split(/\s+/);
     let afterBy = false;
     for (const w of words) {
-        if (w.toLowerCase() === 'by') { afterBy = true; continue; }
-        if (afterBy && /^\d{2,4}$/.test(w)) {
+        if (w.toLowerCase() === 'by') {
+            afterBy = true;
+            continue;
+        }
+        // ตรวจสอบรหัสตัวเลข 1-4 หลัก (เช่น 0, 00, 000)
+        if (afterBy && /^\d{1,4}$/.test(w)) {
             const m = message.guild.members.cache.find(mem => {
                 const n = (mem.nickname || mem.user.displayName || mem.user.username || "").trim();
-                return n.match(/^(\d{2,4})\b/) && n.startsWith(w);
+                const codeMatch = n.match(/^(\d{1,4})\b/); // ดึงตัวเลขหน้าชื่อ
+                // ต้องมีตัวเลขหน้าชื่อ และเลขนั้นต้องเท่ากับที่พิมพ์มาเป๊ะๆ (Exact Match)
+                return codeMatch && codeMatch[1] === w;
             });
             if (m) addPersonToList(tagList, m);
         }
