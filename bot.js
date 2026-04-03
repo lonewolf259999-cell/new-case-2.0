@@ -49,7 +49,6 @@ async function initBot(client, config) {
             const isManualMention = message.content.includes('<@');
 
             if (!isManualMention) {
-
                 const mentionString = tagList.map(p => `<@${p.id}>`).join(' ');
                 const botMsg = await message.channel.send(`📝 **รายชื่อที่บันทึก:** ${mentionString}`);
 
@@ -57,12 +56,11 @@ async function initBot(client, config) {
                 log[botMsg.id] = tagList;
                 saveLog(log);
 
-                await addQueue(() => processSheetBatch(tagList, botMsg, config, false));
+                await addQueue(() => processSheetBatch(tagList, botMsg, config, false, null, tagList[0]));
 
                 if (message.deletable) await message.delete().catch(() => {});
 
             } else {
-
                 await message.react('✅').catch(() => {});
 
                 const log = loadLog();
@@ -71,7 +69,7 @@ async function initBot(client, config) {
                 log[message.id] = tagList;
                 saveLog(log);
 
-                await addQueue(() => processSheetBatch(tagList, message, config, false));
+                await addQueue(() => processSheetBatch(tagList, message, config, false, null, tagList[0]));
             }
 
         } catch (error) {
@@ -82,20 +80,18 @@ async function initBot(client, config) {
     // 🗑️ messageDelete
     client.on('messageDelete', async (message) => {
         try {
-
-            // 🔥 กัน partial
             if (message.partial) {
                 try { await message.fetch(); } catch { return; }
             }
 
             const log = loadLog();
-            const tagList = log[message.id];
-            if (!tagList) return;
+            const oldList = log[message.id];
+            if (!oldList) return;
 
             delete log[message.id];
             saveLog(log);
 
-            await addQueue(() => processSheetBatch(tagList, message, config, true));
+            await addQueue(() => processSheetBatch(oldList, message, config, true, oldList[0], null));
 
         } catch (error) {
             console.error('❌ messageDelete Error:', error);
@@ -105,7 +101,6 @@ async function initBot(client, config) {
     // ✏️ messageUpdate
     client.on('messageUpdate', async (oldMessage, newMessage) => {
         try {
-
             if (newMessage.partial) {
                 try { await newMessage.fetch(); } catch { return; }
             }
@@ -124,11 +119,14 @@ async function initBot(client, config) {
 
             if (added.length === 0 && removed.length === 0) return;
 
+            const oldFirst = oldList[0] || null;
+            const newFirst = newList[0] || null;
+
             if (removed.length > 0)
-                await addQueue(() => processSheetBatch(removed, newMessage, config, true));
+                await addQueue(() => processSheetBatch(removed, newMessage, config, true, oldFirst, null));
 
             if (added.length > 0)
-                await addQueue(() => processSheetBatch(added, newMessage, config, false));
+                await addQueue(() => processSheetBatch(added, newMessage, config, false, null, newFirst));
 
             log[newMessage.id] = newList;
             saveLog(log);
@@ -139,14 +137,14 @@ async function initBot(client, config) {
     });
 }
 
-// --- 🔥 ตัวสำคัญ (แก้ใหม่ทั้งหมด) ---
+// --- 🔥 ตัวสำคัญ: getTagsFromContent ---
 function getTagsFromContent(message) {
     if (!message || !message.content) return [];
 
     const content = message.content.trim();
     let tagList = [];
 
-    // 🔥 แก้ตรงนี้: หา mention ทุกตัว ไม่ว่าติดกันหรือไม่
+    // หา mention ทุกตัว
     const mentionMatches = [...content.matchAll(/<@!?(\d+)>/g)];
     for (const match of mentionMatches) {
         const member = message.guild.members.cache.get(match[1]);
@@ -159,7 +157,7 @@ function getTagsFromContent(message) {
         }
     }
 
-    // --- ส่วน by 00 01 ของคุณยังอยู่เหมือนเดิม ---
+    // ส่วน by 00 01
     const words = content.split(/\s+/);
     let isAfterBy = false;
 
@@ -174,12 +172,7 @@ function getTagsFromContent(message) {
 
         if (isAfterBy && /^\d{2,4}$/.test(word)) {
             target = message.guild.members.cache.find(member => {
-                const name = (
-                    member.nickname ||
-                    member.user.displayName ||
-                    member.user.username ||
-                    ""
-                ).trim();
+                const name = (member.nickname || member.user.displayName || member.user.username || "").trim();
                 const matchName = name.match(/^(\d{2,4})\b/);
                 if (!matchName) return false;
                 return matchName[1] === word;
@@ -198,7 +191,7 @@ function getTagsFromContent(message) {
     return tagList;
 }
 
-// --- Sheet Logic (ของเดิมคุณ ไม่แก้) ---
+// --- Sheet Logic ---
 function findUserRow(rows, person) {
     return rows.findIndex((r, idx) => {
         if (idx < 3 || !r[0]) return false;
@@ -206,7 +199,7 @@ function findUserRow(rows, person) {
     });
 }
 
-async function processSheetBatch(personList, message, config, isDelete = false) {
+async function processSheetBatch(personList, message, config, isDelete = false, oldFirst = null, newFirst = null) {
     try {
         const auth = new google.auth.GoogleAuth({
             credentials: { client_email: keys.client_email, private_key: keys.private_key },
@@ -245,28 +238,26 @@ async function processSheetBatch(personList, message, config, isDelete = false) 
         console.log(`-----------------------------------`);
         console.log(isDelete ? `🗑️ คืนแต้ม (${personList.length})` : `📊 เพิ่มแต้ม (${personList.length})`);
 
-        // --- ลด Bonus ของคนแรกเก่า ถ้าเป็นการลบ/แก้ไข ---
-        if (isDelete && personList.length > 0 && (chId === ids.KADEE || chId === ids.CAR)) {
-            const firstOld = personList[0];
-            const idx = findUserRow(rows, firstOld);
+        // --- ลด Bonus ของคนแรกเก่า ---
+        if (oldFirst && (chId === ids.KADEE || chId === ids.CAR)) {
+            const idx = findUserRow(rows, oldFirst);
             if (idx !== -1) {
-                let oldVal = parseInt(rows[idx][4] || '0');
-                rows[idx][4] = (oldVal - 1).toString();
-                console.log(`Bonus ลด: ${firstOld.nickname} ${oldVal} ➡️ ${rows[idx][4]}`);
+                let val = parseInt(rows[idx][4] || '0');
+                rows[idx][4] = (val - 1).toString();
+                console.log(`Bonus ลด: ${oldFirst.nickname} ${val} ➡️ ${rows[idx][4]}`);
             }
         }
 
+        // --- ปรับ D ของทุกคนใน list ---
         for (const person of personList) {
             let rowIndex = findUserRow(rows, person);
 
             if (rowIndex !== -1) {
-                // --- ปรับคะแนนปกติ D
                 let oldVal = parseInt(rows[rowIndex][colIdx] || '0');
                 let newVal = oldVal + amount;
                 rows[rowIndex][colIdx] = newVal.toString();
                 console.log(`${actionPrefix} ${person.nickname} | ${colName}: ${oldVal} ➡️ ${newVal}`);
             } else if (!isDelete) {
-                // คนใหม่
                 const newRow = [person.nickname, person.username, '0','0','0','0','0'];
                 newRow[colIdx] = '1';
                 rows.push(newRow);
@@ -274,14 +265,13 @@ async function processSheetBatch(personList, message, config, isDelete = false) 
             }
         }
 
-        // --- เพิ่ม Bonus ของคนแรกใหม่ (เฉพาะ add หรือ update) ---
-        if (!isDelete && personList.length > 0 && (chId === ids.KADEE || chId === ids.CAR)) {
-            const firstNew = personList[0];
-            const idx = findUserRow(rows, firstNew);
+        // --- เพิ่ม Bonus ของคนแรกใหม่ ---
+        if (newFirst && (chId === ids.KADEE || chId === ids.CAR)) {
+            const idx = findUserRow(rows, newFirst);
             if (idx !== -1) {
-                let oldVal = parseInt(rows[idx][4] || '0');
-                rows[idx][4] = (oldVal + 1).toString();
-                console.log(`Bonus เพิ่ม: ${firstNew.nickname} ${oldVal} ➡️ ${rows[idx][4]}`);
+                let val = parseInt(rows[idx][4] || '0');
+                rows[idx][4] = (val + 1).toString();
+                console.log(`Bonus เพิ่ม: ${newFirst.nickname} ${val} ➡️ ${rows[idx][4]}`);
             }
         }
 
