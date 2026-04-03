@@ -59,7 +59,6 @@ async function initBot(client, config) {
                 await addQueue(() => processSheetBatch(tagList, botMsg, config, false, null, tagList[0]));
 
                 if (message.deletable) await message.delete().catch(() => {});
-
             } else {
                 await message.react('✅').catch(() => {});
 
@@ -71,7 +70,6 @@ async function initBot(client, config) {
 
                 await addQueue(() => processSheetBatch(tagList, message, config, false, null, tagList[0]));
             }
-
         } catch (error) {
             console.error('❌ messageCreate Error:', error);
         }
@@ -92,7 +90,6 @@ async function initBot(client, config) {
             saveLog(log);
 
             await addQueue(() => processSheetBatch(oldList, message, config, true, oldList[0], null));
-
         } catch (error) {
             console.error('❌ messageDelete Error:', error);
         }
@@ -100,54 +97,55 @@ async function initBot(client, config) {
 
     // ✏️ messageUpdate
     client.on('messageUpdate', async (oldMessage, newMessage) => {
-    try {
-        if (newMessage.partial) {
-            try { await newMessage.fetch(); } catch { return; }
-        }
-        if (!newMessage.guild || newMessage.author?.bot) return;
-
-        const log = loadLog();
-        const oldList = log[newMessage.id] || [];
-        const newList = getTagsFromContent(newMessage);
-
-        const oldIds = oldList.map(x => x.id);
-        const newIds = newList.map(x => x.id);
-
-        const added = newList.filter(x => !oldIds.includes(x.id));
-        const removed = oldList.filter(x => !newIds.includes(x.id));
-
-        if (added.length === 0 && removed.length === 0) return;
-
-        // คนแรกเก่าและใหม่
-        const oldFirst = oldList[0] || null;
-        const newFirst = newList[0] || null;
-
-        // ลด Bonus ของคนแรกเก่าเฉพาะถูกลบจริง ๆ
-        if (oldFirst && (oldFirst.id !== newFirst?.id)) {
-            const stillExists = newList.find(p => p.id === oldFirst.id);
-            if (!stillExists) {
-                await addQueue(() => processSheetBatch([oldFirst], newMessage, config, true, oldFirst, null));
+        try {
+            if (newMessage.partial) {
+                try { await newMessage.fetch(); } catch { return; }
             }
+            if (!newMessage.guild || newMessage.author?.bot) return;
+
+            const log = loadLog();
+            const oldList = log[newMessage.id] || [];
+            const newList = getTagsFromContent(newMessage);
+
+            const oldIds = oldList.map(x => x.id);
+            const newIds = newList.map(x => x.id);
+
+            const added = newList.filter(x => !oldIds.includes(x.id));
+            const removed = oldList.filter(x => !newIds.includes(x.id));
+
+            if (added.length === 0 && removed.length === 0) return;
+
+            // คนแรกเก่าและใหม่
+            const oldFirst = oldList[0] || null;
+            const newFirst = newList[0] || null;
+
+            // ลด Bonus ของคนแรกเก่าเฉพาะถูกลบจริง ๆ
+            if (oldFirst && (oldFirst.id !== newFirst?.id)) {
+                const stillExists = newList.find(p => p.id === oldFirst.id);
+                if (!stillExists) {
+                    await addQueue(() => processSheetBatch([oldFirst], newMessage, config, true, oldFirst, null));
+                }
+            }
+
+            // เพิ่ม Bonus ให้คนแรกใหม่ ถ้าเปลี่ยน
+            if (newFirst && (newFirst.id !== oldFirst?.id)) {
+                await addQueue(() => processSheetBatch([newFirst], newMessage, config, false, null, newFirst));
+            }
+
+            // ปรับคะแนน D ของคนที่เพิ่ม/ลบปกติ
+            if (removed.length > 0)
+                await addQueue(() => processSheetBatch(removed, newMessage, config, true));
+            if (added.length > 0)
+                await addQueue(() => processSheetBatch(added, newMessage, config, false));
+
+            log[newMessage.id] = newList;
+            saveLog(log);
+
+        } catch (error) {
+            console.error('❌ messageUpdate Error:', error);
         }
-
-        // เพิ่ม Bonus ให้คนแรกใหม่ ถ้าเปลี่ยน
-        if (newFirst && (newFirst.id !== oldFirst?.id)) {
-            await addQueue(() => processSheetBatch([newFirst], newMessage, config, false, null, newFirst));
-        }
-
-        // ปรับคะแนน D ของคนที่เพิ่ม/ลบปกติ
-        if (removed.length > 0)
-            await addQueue(() => processSheetBatch(removed, newMessage, config, true));
-        if (added.length > 0)
-            await addQueue(() => processSheetBatch(added, newMessage, config, false));
-
-        log[newMessage.id] = newList;
-        saveLog(log);
-
-    } catch (error) {
-        console.error('❌ messageUpdate Error:', error);
-    }
-});
+    });
+}
 
 // ------------------------------
 // processSheetBatch
