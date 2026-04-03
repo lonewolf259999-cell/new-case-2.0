@@ -100,112 +100,63 @@ async function initBot(client, config) {
 
     // ✏️ messageUpdate
     client.on('messageUpdate', async (oldMessage, newMessage) => {
-        try {
-            if (newMessage.partial) {
-                try { await newMessage.fetch(); } catch { return; }
+    try {
+        if (newMessage.partial) {
+            try { await newMessage.fetch(); } catch { return; }
+        }
+        if (!newMessage.guild || newMessage.author?.bot) return;
+
+        const log = loadLog();
+        const oldList = log[newMessage.id] || [];
+        const newList = getTagsFromContent(newMessage);
+
+        const oldIds = oldList.map(x => x.id);
+        const newIds = newList.map(x => x.id);
+
+        const added = newList.filter(x => !oldIds.includes(x.id));
+        const removed = oldList.filter(x => !newIds.includes(x.id));
+
+        if (added.length === 0 && removed.length === 0) return;
+
+        // คนแรกเก่าและใหม่
+        const oldFirst = oldList[0] || null;
+        const newFirst = newList[0] || null;
+
+        // ลด Bonus ของคนแรกเก่าเฉพาะถูกลบจริง ๆ
+        if (oldFirst && (oldFirst.id !== newFirst?.id)) {
+            const stillExists = newList.find(p => p.id === oldFirst.id);
+            if (!stillExists) {
+                await addQueue(() => processSheetBatch([oldFirst], newMessage, config, true, oldFirst, null));
             }
-
-            if (!newMessage.guild || newMessage.author?.bot) return;
-
-            const log = loadLog();
-            const oldList = log[newMessage.id] || [];
-            const newList = getTagsFromContent(newMessage);
-
-            const oldIds = oldList.map(x => x.id);
-            const newIds = newList.map(x => x.id);
-
-            const added = newList.filter(x => !oldIds.includes(x.id));
-            const removed = oldList.filter(x => !newIds.includes(x.id));
-
-            if (added.length === 0 && removed.length === 0) return;
-
-            const oldFirst = oldList[0] || null;
-            const newFirst = newList[0] || null;
-
-            if (removed.length > 0)
-                await addQueue(() => processSheetBatch(removed, newMessage, config, true, oldFirst, null));
-
-            if (added.length > 0)
-                await addQueue(() => processSheetBatch(added, newMessage, config, false, null, newFirst));
-
-            log[newMessage.id] = newList;
-            saveLog(log);
-
-        } catch (error) {
-            console.error('❌ messageUpdate Error:', error);
         }
-    });
-}
 
-// --- 🔥 ตัวสำคัญ: getTagsFromContent ---
-function getTagsFromContent(message) {
-    if (!message || !message.content) return [];
-
-    const content = message.content.trim();
-    let tagList = [];
-
-    // หา mention ทุกตัว
-    const mentionMatches = [...content.matchAll(/<@!?(\d+)>/g)];
-    for (const match of mentionMatches) {
-        const member = message.guild.members.cache.get(match[1]);
-        if (member && !tagList.some(p => p.id === member.id)) {
-            tagList.push({
-                id: member.id,
-                nickname: (member.nickname || member.user.displayName || member.user.username).trim(),
-                username: member.user.username
-            });
+        // เพิ่ม Bonus ให้คนแรกใหม่ ถ้าเปลี่ยน
+        if (newFirst && (newFirst.id !== oldFirst?.id)) {
+            await addQueue(() => processSheetBatch([newFirst], newMessage, config, false, null, newFirst));
         }
+
+        // ปรับคะแนน D ของคนที่เพิ่ม/ลบปกติ
+        if (removed.length > 0)
+            await addQueue(() => processSheetBatch(removed, newMessage, config, true));
+        if (added.length > 0)
+            await addQueue(() => processSheetBatch(added, newMessage, config, false));
+
+        log[newMessage.id] = newList;
+        saveLog(log);
+
+    } catch (error) {
+        console.error('❌ messageUpdate Error:', error);
     }
+});
 
-    // ส่วน by 00 01
-    const words = content.split(/\s+/);
-    let isAfterBy = false;
-
-    for (const wordRaw of words) {
-        const word = wordRaw.trim();
-        let target = null;
-
-        if (word.toLowerCase() === 'by') {
-            isAfterBy = true;
-            continue;
-        }
-
-        if (isAfterBy && /^\d{2,4}$/.test(word)) {
-            target = message.guild.members.cache.find(member => {
-                const name = (member.nickname || member.user.displayName || member.user.username || "").trim();
-                const matchName = name.match(/^(\d{2,4})\b/);
-                if (!matchName) return false;
-                return matchName[1] === word;
-            });
-        }
-
-        if (target && !tagList.some(p => p.id === target.id)) {
-            tagList.push({
-                id: target.id,
-                nickname: (target.nickname || target.user.displayName || target.user.username).trim(),
-                username: target.user.username
-            });
-        }
-    }
-
-    return tagList;
-}
-
-// --- Sheet Logic ---
-function findUserRow(rows, person) {
-    return rows.findIndex((r, idx) => {
-        if (idx < 3 || !r[0]) return false;
-        return r[0].toLowerCase() === person.nickname.toLowerCase();
-    });
-}
-
+// ------------------------------
+// processSheetBatch
 async function processSheetBatch(personList, message, config, isDelete = false, oldFirst = null, newFirst = null) {
     try {
         const auth = new google.auth.GoogleAuth({
             credentials: { client_email: keys.client_email, private_key: keys.private_key },
             scopes: ['https://www.googleapis.com/auth/spreadsheets']
         });
-
         const sheets = google.sheets({ version: 'v4', auth });
         const spreadsheetId = config.SPREADSHEET_ID;
         const sheetName = config.SHEET_NAME;
@@ -214,19 +165,16 @@ async function processSheetBatch(personList, message, config, isDelete = false, 
             spreadsheetId,
             range: `${sheetName}!A:G`
         });
-
         let rows = res.data.values || [];
 
         const ids = config.CHANNELS;
         const chId = message.channel.id;
-
         const channelMap = {
             [ids.TECH2]: { idx: 2, name: "TECH2" },
             [ids.KADEE]: { idx: 3, name: "คดี" },
             [ids.CAR]:   { idx: 5, name: "รถ" },
             [ids.EXAM]:  { idx: 6, name: "สอบ" }
         };
-
         const currentCh = channelMap[chId];
         if (!currentCh) return;
 
@@ -238,7 +186,7 @@ async function processSheetBatch(personList, message, config, isDelete = false, 
         console.log(`-----------------------------------`);
         console.log(isDelete ? `🗑️ คืนแต้ม (${personList.length})` : `📊 เพิ่มแต้ม (${personList.length})`);
 
-        // --- ลด Bonus ของคนแรกเก่า ---
+        // --- Bonus ลด ของคนแรกเก่า ---
         if (oldFirst && (chId === ids.KADEE || chId === ids.CAR)) {
             const idx = findUserRow(rows, oldFirst);
             if (idx !== -1) {
@@ -248,10 +196,19 @@ async function processSheetBatch(personList, message, config, isDelete = false, 
             }
         }
 
-        // --- ปรับ D ของทุกคนใน list ---
+        // --- Bonus เพิ่ม ของคนแรกใหม่ ---
+        if (newFirst && (chId === ids.KADEE || chId === ids.CAR)) {
+            const idx = findUserRow(rows, newFirst);
+            if (idx !== -1) {
+                let val = parseInt(rows[idx][4] || '0');
+                rows[idx][4] = (val + 1).toString();
+                console.log(`Bonus เพิ่ม: ${newFirst.nickname} ${val} ➡️ ${rows[idx][4]}`);
+            }
+        }
+
+        // --- ปรับคะแนน D ปกติของคนใน personList ---
         for (const person of personList) {
             let rowIndex = findUserRow(rows, person);
-
             if (rowIndex !== -1) {
                 let oldVal = parseInt(rows[rowIndex][colIdx] || '0');
                 let newVal = oldVal + amount;
@@ -265,16 +222,6 @@ async function processSheetBatch(personList, message, config, isDelete = false, 
             }
         }
 
-        // --- เพิ่ม Bonus ของคนแรกใหม่ ---
-        if (newFirst && (chId === ids.KADEE || chId === ids.CAR)) {
-            const idx = findUserRow(rows, newFirst);
-            if (idx !== -1) {
-                let val = parseInt(rows[idx][4] || '0');
-                rows[idx][4] = (val + 1).toString();
-                console.log(`Bonus เพิ่ม: ${newFirst.nickname} ${val} ➡️ ${rows[idx][4]}`);
-            }
-        }
-
         await sheets.spreadsheets.values.update({
             spreadsheetId,
             range: `${sheetName}!A1`,
@@ -284,7 +231,6 @@ async function processSheetBatch(personList, message, config, isDelete = false, 
 
         console.log(`✅ อัปเดตสำเร็จ`);
         console.log(`-----------------------------------`);
-
     } catch (e) {
         console.error('❌ API Error:', e);
     }
