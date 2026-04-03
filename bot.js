@@ -143,42 +143,46 @@ async function initBot(client, config) {
 function getTagsFromContent(message) {
     if (!message || !message.content) return [];
 
-    const words = message.content.trim().split(/\s+/);
+    const content = message.content.trim();
     let tagList = [];
+
+    // 🔥 แก้ตรงนี้: หา mention ทุกตัว ไม่ว่าติดกันหรือไม่
+    const mentionMatches = [...content.matchAll(/<@!?(\d+)>/g)];
+    for (const match of mentionMatches) {
+        const member = message.guild.members.cache.get(match[1]);
+        if (member && !tagList.some(p => p.id === member.id)) {
+            tagList.push({
+                id: member.id,
+                nickname: (member.nickname || member.user.displayName || member.user.username).trim(),
+                username: member.user.username
+            });
+        }
+    }
+
+    // --- ส่วน by 00 01 ของคุณยังอยู่เหมือนเดิม ---
+    const words = content.split(/\s+/);
     let isAfterBy = false;
 
     for (const wordRaw of words) {
         const word = wordRaw.trim();
         let target = null;
 
-        // mention
-        const mentionMatch = word.match(/^<@!?(\d+)>$/);
-        if (mentionMatch) {
-            target = message.guild.members.cache.get(mentionMatch[1]);
-        }
-
-        // by
-        else if (word.toLowerCase() === 'by') {
+        if (word.toLowerCase() === 'by') {
             isAfterBy = true;
             continue;
         }
 
-        // 🔥 รองรับ 00 / 000 / 0000 / 01
-        else if (isAfterBy && /^\d{2,4}$/.test(word)) {
-
+        if (isAfterBy && /^\d{2,4}$/.test(word)) {
             target = message.guild.members.cache.find(member => {
-
                 const name = (
                     member.nickname ||
                     member.user.displayName ||
                     member.user.username ||
                     ""
                 ).trim();
-
-                const match = name.match(/^(\d{2,4})\b/);
-                if (!match) return false;
-
-                return match[1] === word;
+                const matchName = name.match(/^(\d{2,4})\b/);
+                if (!matchName) return false;
+                return matchName[1] === word;
             });
         }
 
