@@ -1,18 +1,6 @@
 require('dotenv').config();
-const { 
-    Client, 
-    GatewayIntentBits, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
-    ModalBuilder, 
-    TextInputBuilder, 
-    TextInputStyle, 
-    EmbedBuilder, 
-    Events, 
-    MessageFlags 
-} = require('discord.js');
-
+// ✅ 1. เพิ่ม Events และ MessageFlags เข้ามาที่บรรทัดนี้
+const { Client, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, Events, MessageFlags } = require('discord.js');
 const { initBot } = require('./bot.js');
 const { initCommands } = require('./commands.js');
 const { runManualCount } = require('./CountCase.js');
@@ -20,9 +8,6 @@ const { google } = require('googleapis');
 const keys = require('./credentials.json');
 const http = require('http');
 const https = require('https');
-
-// ✅ นำเข้า Logger สำหรับแจ้งเตือนผ่าน Webhook
-const Logger = require('./logger.js');
 
 // Spreadsheet ID ของไฟล์ Config
 const CONFIG_SPREADSHEET_ID = '1YV_BIFiilxUM9XrW1cSYZTOgne1JnKoCXtRw7PUCCGs';
@@ -64,8 +49,6 @@ async function loadConfigFromSheets() {
             console.log('✅ Load config from Google Sheets successfully!');
         }
     } catch (error) {
-        // ✅ แจ้งเตือนเมื่อโหลด Config ไม่สำเร็จ
-        await Logger.logError(error, 'loadConfigFromSheets');
         console.error('⚠️ Load config error (using default):', error.message);
         try { config = require('./config.json'); } catch(e) {}
     }
@@ -100,8 +83,6 @@ async function updateConfigInSheets(newConfig) {
         });
         console.log('✅ Sync config to Google Sheets successfully!');
     } catch (err) {
-        // ✅ แจ้งเตือนเมื่อบันทึก Config ลง Sheet ไม่สำเร็จ
-        await Logger.logError(err, 'updateConfigInSheets');
         console.error('❌ Failed to sync config to Sheets:', err);
     }
 }
@@ -116,25 +97,14 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
     ],
+    partials: ['MESSAGE', 'CHANNEL', 'GUILD_MEMBER'] 
 });
 
 async function startApp() {
-    try {
-        await loadConfigFromSheets(); 
-        initBot(client, config);
-        initCommands(client, config);
-        
-        await client.login(process.env.DISCORD_TOKEN);
-
-        // ✅ แจ้งเตือนสถานะ Online พร้อมข้อมูลระบบ
-        client.once(Events.ClientReady, async () => {
-            await Logger.logReady(client);
-        });
-
-    } catch (error) {
-        // ✅ แจ้งเตือนเมื่อบอท Start ไม่สำเร็จ
-        await Logger.logError(error, 'startApp (Login/Init)');
-    }
+    await loadConfigFromSheets(); 
+    initBot(client, config);
+    initCommands(client, config);
+    client.login(process.env.DISCORD_TOKEN);
 }
 
 function createStatusEmbed(conf) {
@@ -146,26 +116,32 @@ function createStatusEmbed(conf) {
 }
 
 client.on('messageCreate', async (message) => {
-    if (message.content === '!setup' && message.member.permissions.has('Administrator')) {
+    if (
+        message.guild &&
+        message.content === '!setup' &&
+        message.member?.permissions?.has('Administrator')
+    ) {
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('start_recount').setLabel('⭐ เริ่มนับข้อความเก่า').setStyle(ButtonStyle.Primary),
             new ButtonBuilder().setCustomId('open_settings').setLabel('⚙️ ตั้งค่า').setStyle(ButtonStyle.Success)
         );
 
-        await message.channel.send({ embeds: [createStatusEmbed(config)], components: [row] });
+        await message.channel.send({ 
+            embeds: [createStatusEmbed(config)], 
+            components: [row] 
+        });
     }
 });
 
 client.on('interactionCreate', async (interaction) => {
     // ปุ่มนับข้อความเก่า
     if (interaction.isButton() && interaction.customId === 'start_recount') {
+        // ✅ 2. เพิ่มจุดนี้เพื่อแก้ปัญหา Unknown Interaction (Code 10062)
+        // และใช้ flags: [MessageFlags.Ephemeral] เพื่อแก้ Warning ตัวที่สอง
         try {
             await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
             await runManualCount(interaction, config);
-        } catch (e) { 
-            await Logger.logError(e, 'Button: start_recount');
-            console.error(e); 
-        }
+        } catch (e) { console.error(e); }
     }
 
     // ปุ่มตั้งค่า
@@ -188,35 +164,33 @@ client.on('interactionCreate', async (interaction) => {
 
     // เมื่อกดยืนยันใน Modal
     if (interaction.isModalSubmit() && interaction.customId === 'settings_modal') {
-        try {
-            await interaction.deferUpdate();
-            
-            const newIds = interaction.fields.getTextInputValue('m_channels').split(',').map(id => id.trim());
-            
-            config.SPREADSHEET_ID = interaction.fields.getTextInputValue('m_sheet_id');
-            config.SHEET_NAME = interaction.fields.getTextInputValue('m_sheet_name');
-            config.CHANNELS = {
-                "TECH2": newIds[0], "KADEE": newIds[1], "CAR": newIds[2], "EXAM": newIds[3]
-            };
+        await interaction.deferUpdate();
+        
+        const newIds = interaction.fields.getTextInputValue('m_channels').split(',').map(id => id.trim());
+        
+        config.SPREADSHEET_ID = interaction.fields.getTextInputValue('m_sheet_id');
+        config.SHEET_NAME = interaction.fields.getTextInputValue('m_sheet_name');
+        config.CHANNELS = {
+            "TECH2": newIds[0], "KADEE": newIds[1], "CAR": newIds[2], "EXAM": newIds[3]
+        };
 
-            await updateConfigInSheets(config);
+        await updateConfigInSheets(config);
 
-            await interaction.editReply({ 
-                embeds: [createStatusEmbed(config)], 
-                components: [interaction.message.components[0]] 
-            });
-        } catch (err) {
-            await Logger.logError(err, 'ModalSubmit: settings_modal');
-        }
+        await interaction.editReply({ 
+            embeds: [createStatusEmbed(config)], 
+            components: [interaction.message.components[0]] 
+        });
     }
 });
 
 /* =====================================================
-    🌐 KEEP-ALIVE SERVER
+    🌐 KEEP-ALIVE SERVER (สำหรับ Render Port Binding)
 ===================================================== */
 const PORT = process.env.PORT || 3000;
 
 http.createServer((req, res) => {
+    console.log(`🤖 [${new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' })}] UptimeRobot: ตรวจสอบสถานะบอท (Ping!)`);
+
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Discord Bot is running!\n');
 }).listen(PORT, '0.0.0.0', () => {
@@ -224,13 +198,13 @@ http.createServer((req, res) => {
 });
 
 /* =====================================================
-    🌐 SELF-PING (กระตุ้นตัวเองทุก 5 นาที)
+    🌐 SELF-PING (กระตุ้นตัวเองทุก 10 นาที)
 ===================================================== */
-const APP_URL = 'https://new-case-1.onrender.com'; 
+const APP_URL = 'https://new-case-1.onrender.com'; // URL ของคุณ
 
 setInterval(() => {
     https.get(APP_URL, (res) => {
-        // พ่น log เฉพาะใน Console
+        console.log(`🌐 [${new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' })}] Self-Ping: สถานะการตอบกลับ ${res.statusCode}`);
     }).on('error', (err) => {
         console.error(`❌ Self-Ping Error: ${err.message}`);
     });
