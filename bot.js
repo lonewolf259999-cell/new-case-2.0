@@ -245,39 +245,43 @@ async function processSheetBatch(personList, message, config, isDelete = false) 
         console.log(`-----------------------------------`);
         console.log(isDelete ? `🗑️ คืนแต้ม (${personList.length})` : `📊 เพิ่มแต้ม (${personList.length})`);
 
-        for (const person of personList) {
+        // --- ลด Bonus ของคนแรกเก่า ถ้าเป็นการลบ/แก้ไข ---
+        if (isDelete && personList.length > 0 && (chId === ids.KADEE || chId === ids.CAR)) {
+            const firstOld = personList[0];
+            const idx = findUserRow(rows, firstOld);
+            if (idx !== -1) {
+                let oldVal = parseInt(rows[idx][4] || '0');
+                rows[idx][4] = (oldVal - 1).toString();
+                console.log(`Bonus ลด: ${firstOld.nickname} ${oldVal} ➡️ ${rows[idx][4]}`);
+            }
+        }
 
-            const isFirst = (person.id === personList[0].id);
+        for (const person of personList) {
             let rowIndex = findUserRow(rows, person);
 
             if (rowIndex !== -1) {
-
+                // --- ปรับคะแนนปกติ D
                 let oldVal = parseInt(rows[rowIndex][colIdx] || '0');
                 let newVal = oldVal + amount;
                 rows[rowIndex][colIdx] = newVal.toString();
-
-                console.log(`${actionPrefix} ${person.nickname} | ${colName}: ${oldVal} ➡️  ${newVal}`);
-
-                if (isFirst && (chId === ids.KADEE || chId === ids.CAR)) {
-                    let oldBonus = parseInt(rows[rowIndex][4] || '0');
-                    let newBonus = oldBonus + amount;
-                    rows[rowIndex][4] = newBonus.toString();
-
-                    console.log(`Bonus: ${person.nickname} ${oldBonus} ➡️  ${newBonus}`);
-                }
-
+                console.log(`${actionPrefix} ${person.nickname} | ${colName}: ${oldVal} ➡️ ${newVal}`);
             } else if (!isDelete) {
-
+                // คนใหม่
                 const newRow = [person.nickname, person.username, '0','0','0','0','0'];
                 newRow[colIdx] = '1';
-
-                if (isFirst && (chId === ids.KADEE || chId === ids.CAR)) {
-                    newRow[4] = '1';
-                }
-
                 rows.push(newRow);
-
                 console.log(`🆕 ${person.nickname}`);
+            }
+        }
+
+        // --- เพิ่ม Bonus ของคนแรกใหม่ (เฉพาะ add หรือ update) ---
+        if (!isDelete && personList.length > 0 && (chId === ids.KADEE || chId === ids.CAR)) {
+            const firstNew = personList[0];
+            const idx = findUserRow(rows, firstNew);
+            if (idx !== -1) {
+                let oldVal = parseInt(rows[idx][4] || '0');
+                rows[idx][4] = (oldVal + 1).toString();
+                console.log(`Bonus เพิ่ม: ${firstNew.nickname} ${oldVal} ➡️ ${rows[idx][4]}`);
             }
         }
 
