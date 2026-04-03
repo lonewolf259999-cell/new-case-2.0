@@ -17,6 +17,7 @@ function saveLog(data) {
     fs.writeFileSync(LOG_FILE, JSON.stringify(data, null, 2));
 }
 
+// queue กันชน API
 let queue = Promise.resolve();
 function addQueue(task) {
     queue = queue.then(task).catch(console.error);
@@ -33,11 +34,12 @@ async function initBot(client, config) {
         }
     });
 
-    // 📩 ตรวจจับข้อความใหม่
+    // 📩 messageCreate
     client.on('messageCreate', async (message) => {
         try {
             const ids = config.CHANNELS;
             const allowedChannels = [ids.TECH2, ids.KADEE, ids.CAR, ids.EXAM];
+
             if (!message.guild || message.author.bot) return;
             if (!allowedChannels.includes(message.channel.id)) return;
 
@@ -47,46 +49,69 @@ async function initBot(client, config) {
             const isManualMention = message.content.includes('<@');
 
             if (!isManualMention) {
+
                 const mentionString = tagList.map(p => `<@${p.id}>`).join(' ');
                 const botMsg = await message.channel.send(`📝 **รายชื่อที่บันทึก:** ${mentionString}`);
 
                 const log = loadLog();
                 log[botMsg.id] = tagList;
                 saveLog(log);
-                
-                // 🔥 แก้ตรงนี้ (ใช้ botMsg)
+
                 await addQueue(() => processSheetBatch(tagList, botMsg, config, false));
-                
+
                 if (message.deletable) await message.delete().catch(() => {});
+
             } else {
+
                 await message.react('✅').catch(() => {});
+
                 const log = loadLog();
-                if (log[message.id]) return; 
+                if (log[message.id]) return;
 
                 log[message.id] = tagList;
                 saveLog(log);
+
                 await addQueue(() => processSheetBatch(tagList, message, config, false));
             }
-        } catch (error) { console.error('❌ messageCreate Error:', error); }
+
+        } catch (error) {
+            console.error('❌ messageCreate Error:', error);
+        }
     });
 
-    // 🗑️ ตรวจจับการลบข้อความ (คืนแต้ม)
+    // 🗑️ messageDelete
     client.on('messageDelete', async (message) => {
         try {
+
+            // 🔥 กัน partial
+            if (message.partial) {
+                try { await message.fetch(); } catch { return; }
+            }
+
             const log = loadLog();
             const tagList = log[message.id];
-            if (!tagList) return; 
+            if (!tagList) return;
 
             delete log[message.id];
             saveLog(log);
+
             await addQueue(() => processSheetBatch(tagList, message, config, true));
-        } catch (error) { console.error('❌ messageDelete Error:', error); }
+
+        } catch (error) {
+            console.error('❌ messageDelete Error:', error);
+        }
     });
 
-    // ✏️ ตรวจจับการแก้ไขข้อความ
+    // ✏️ messageUpdate
     client.on('messageUpdate', async (oldMessage, newMessage) => {
         try {
-            if (!newMessage.guild || newMessage.author.bot) return;
+
+            if (newMessage.partial) {
+                try { await newMessage.fetch(); } catch { return; }
+            }
+
+            if (!newMessage.guild || newMessage.author?.bot) return;
+
             const log = loadLog();
             const oldList = log[newMessage.id] || [];
             const newList = getTagsFromContent(newMessage);
@@ -99,16 +124,22 @@ async function initBot(client, config) {
 
             if (added.length === 0 && removed.length === 0) return;
 
-            if (removed.length > 0) await addQueue(() => processSheetBatch(removed, newMessage, config, true));
-            if (added.length > 0) await addQueue(() => processSheetBatch(added, newMessage, config, false));
+            if (removed.length > 0)
+                await addQueue(() => processSheetBatch(removed, newMessage, config, true));
+
+            if (added.length > 0)
+                await addQueue(() => processSheetBatch(added, newMessage, config, false));
 
             log[newMessage.id] = newList;
             saveLog(log);
-        } catch (error) { console.error('❌ messageUpdate Error:', error); }
+
+        } catch (error) {
+            console.error('❌ messageUpdate Error:', error);
+        }
     });
 }
 
-// --- LOGIC ค้นหาชื่อคน ---
+// --- 🔥 ตัวสำคัญ (แก้ใหม่ทั้งหมด) ---
 function getTagsFromContent(message) {
     if (!message || !message.content) return [];
 
@@ -120,14 +151,23 @@ function getTagsFromContent(message) {
         const word = wordRaw.trim();
         let target = null;
 
+        // mention
         const mentionMatch = word.match(/^<@!?(\d+)>$/);
         if (mentionMatch) {
             target = message.guild.members.cache.get(mentionMatch[1]);
-        } else if (word.toLowerCase() === 'by') {
+        }
+
+        // by
+        else if (word.toLowerCase() === 'by') {
             isAfterBy = true;
             continue;
-        } else if (isAfterBy && /^\d+$/.test(word)) {
+        }
+
+        // 🔥 รองรับ 00 / 000 / 0000 / 01
+        else if (isAfterBy && /^\d{2,4}$/.test(word)) {
+
             target = message.guild.members.cache.find(member => {
+
                 const name = (
                     member.nickname ||
                     member.user.displayName ||
@@ -135,8 +175,10 @@ function getTagsFromContent(message) {
                     ""
                 ).trim();
 
-                const firstWord = name.trim().split(/\s+/)[0];
-                return firstWord === word;
+                const match = name.match(/^(\d{2,4})\b/);
+                if (!match) return false;
+
+                return match[1] === word;
             });
         }
 
@@ -152,6 +194,7 @@ function getTagsFromContent(message) {
     return tagList;
 }
 
+// --- Sheet Logic (ของเดิมคุณ ไม่แก้) ---
 function findUserRow(rows, person) {
     return rows.findIndex((r, idx) => {
         if (idx < 3 || !r[0]) return false;
@@ -159,22 +202,27 @@ function findUserRow(rows, person) {
     });
 }
 
-// --- Google Sheets ---
 async function processSheetBatch(personList, message, config, isDelete = false) {
     try {
         const auth = new google.auth.GoogleAuth({
             credentials: { client_email: keys.client_email, private_key: keys.private_key },
             scopes: ['https://www.googleapis.com/auth/spreadsheets']
         });
+
         const sheets = google.sheets({ version: 'v4', auth });
         const spreadsheetId = config.SPREADSHEET_ID;
         const sheetName = config.SHEET_NAME;
 
-        const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!A:G` });
+        const res = await sheets.spreadsheets.values.get({
+            spreadsheetId,
+            range: `${sheetName}!A:G`
+        });
+
         let rows = res.data.values || [];
 
         const ids = config.CHANNELS;
         const chId = message.channel.id;
+
         const channelMap = {
             [ids.TECH2]: { idx: 2, name: "TECH2" },
             [ids.KADEE]: { idx: 3, name: "คดี" },
@@ -194,27 +242,35 @@ async function processSheetBatch(personList, message, config, isDelete = false) 
         console.log(isDelete ? `🗑️ คืนแต้ม (${personList.length})` : `📊 เพิ่มแต้ม (${personList.length})`);
 
         for (const person of personList) {
+
             const isFirst = (person.id === personList[0].id);
             let rowIndex = findUserRow(rows, person);
 
             if (rowIndex !== -1) {
+
                 let oldVal = parseInt(rows[rowIndex][colIdx] || '0');
                 let newVal = oldVal + amount;
                 rows[rowIndex][colIdx] = newVal.toString();
 
-                console.log(`${actionPrefix} ${person.nickname} | ${colName}: ${oldVal} ➡️ ${newVal}`);
+                console.log(`${actionPrefix} ${person.nickname} | ${colName}: ${oldVal} ➡️  ${newVal}`);
 
                 if (isFirst && (chId === ids.KADEE || chId === ids.CAR)) {
                     let oldBonus = parseInt(rows[rowIndex][4] || '0');
                     let newBonus = oldBonus + amount;
                     rows[rowIndex][4] = newBonus.toString();
 
-                    console.log(`Bonus: ${person.nickname} ${oldBonus} ➡️ ${newBonus}`);
+                    console.log(`Bonus: ${person.nickname} ${oldBonus} ➡️  ${newBonus}`);
                 }
+
             } else if (!isDelete) {
+
                 const newRow = [person.nickname, person.username, '0','0','0','0','0'];
                 newRow[colIdx] = '1';
-                if (isFirst && (chId === ids.KADEE || chId === ids.CAR)) newRow[4] = '1';
+
+                if (isFirst && (chId === ids.KADEE || chId === ids.CAR)) {
+                    newRow[4] = '1';
+                }
+
                 rows.push(newRow);
 
                 console.log(`🆕 ${person.nickname}`);
@@ -231,7 +287,9 @@ async function processSheetBatch(personList, message, config, isDelete = false) 
         console.log(`✅ อัปเดตสำเร็จ`);
         console.log(`-----------------------------------`);
 
-    } catch (e) { console.error('❌ API Error:', e); }
+    } catch (e) {
+        console.error('❌ API Error:', e);
+    }
 }
 
 module.exports = { initBot };
