@@ -200,7 +200,7 @@ http.createServer((req, res) => {
 /* =====================================================
     🌐 SELF-PING (กระตุ้นตัวเองทุก 10 นาที)
 ===================================================== */
-const APP_URL = 'https://new-case-1.onrender.com'; // URL ของคุณ
+const APP_URL = process.env.APP_URL; 
 
 setInterval(() => {
     https.get(APP_URL, (res) => {
