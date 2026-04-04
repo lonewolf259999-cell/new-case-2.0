@@ -1,6 +1,9 @@
 const { google } = require('googleapis');
 const keys = require('./credentials.json');
 
+// 🔥 เพิ่มบรรทัดนี้ (สำคัญ)
+const { loadSheet } = require('./bot.js');
+
 async function runManualCount(interaction, config) { 
     
     if (!interaction.deferred && !interaction.replied) {
@@ -106,7 +109,6 @@ async function runManualCount(interaction, config) {
 
                 totalMsgCount += messages.size;
 
-                // ✅ แก้จุดนี้: ให้แจ้งเตือนทั้งใน DC และ Console ทุกๆ 1,000 ข้อความ
                 if (totalMsgCount % 1000 === 0) {
                     await interaction.editReply(`⏳ **กำลังนับยอด...** (อ่านไปแล้ว ${totalMsgCount.toLocaleString()} ข้อความ)`)
                         .catch(() => null);
@@ -116,10 +118,10 @@ async function runManualCount(interaction, config) {
 
                 lastId = messages.last()?.id;
                 if (messages.size < 100) hasMore = false;
-            } // ปิด while hasMore
-        } // ปิด loop channel
+            }
+        }
 
-        // 4. บันทึกลง Google Sheets
+        // ✅ เขียนลงชีต
         await sheets.spreadsheets.values.update({
             spreadsheetId: spreadsheetId,
             range: `${sheetName}!A1`,
@@ -127,13 +129,21 @@ async function runManualCount(interaction, config) {
             resource: { values: rows }
         });
 
+        // 🔥🔥 สำคัญ: reload cache หลัง recount
+        try {
+            await loadSheet(sheets, config);
+            console.log('♻️ รีโหลด sheetCache สำเร็จ');
+        } catch (e) {
+            console.error('❌ โหลด cache ไม่สำเร็จ');
+        }
+
         await interaction.editReply(`✅ **นับยอดเสร็จสิ้น!** ทั้งหมด ${totalMsgCount.toLocaleString()} ข้อความ\n*(ข้อความนี้จะหายไปเองใน 5 วินาที)*`);
 
         setTimeout(async () => {
             try {
                 await interaction.deleteReply();
                 console.log('🗑️ ลบข้อความแจ้งเตือน Recount เรียบร้อย');
-            } catch (e) { }
+            } catch (e) {}
         }, 5000);
 
         console.log(`✅ สำเร็จ: รวมทั้งสิ้น ${totalMsgCount} ข้อความ`);
