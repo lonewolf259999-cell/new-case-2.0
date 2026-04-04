@@ -29,32 +29,42 @@ async function initBot(client, config) {
     });
 
     client.on('messageCreate', async (message) => {
-        try {
-            const ids = config.CHANNELS;
-            const allowed = [ids.TECH2, ids.KADEE, ids.CAR, ids.EXAM];
-            if (!message.guild || message.author.bot || !allowed.includes(message.channel.id)) return;
+    try {
+        const ids = config.CHANNELS;
+        const allowed = [ids.TECH2, ids.KADEE, ids.CAR, ids.EXAM];
+        if (!message.guild || message.author.bot || !allowed.includes(message.channel.id)) return;
 
-            const tagList = getTagsFromContent(message);
-            if (tagList.length === 0) return;
+        const tagList = getTagsFromContent(message);
+        if (tagList.length === 0) return;
 
-            if (!message.content.includes('<@')) {
-                const mentionString = tagList.map(p => `<@${p.id}>`).join(' ');
-                const botMsg = await message.channel.send(`📝 **บันทึก:** ${mentionString}`);
-                const log = loadLog();
-                log[botMsg.id] = tagList;
-                saveLog(log);
-                await addQueue(() => processSheetBatch(tagList, botMsg, config, false, true));
-                if (message.deletable) await message.delete().catch(() => {});
-            } else {
-                await message.react('✅').catch(() => {});
-                const log = loadLog();
-                if (log[message.id]) return;
-                log[message.id] = tagList;
-                saveLog(log);
-                await addQueue(() => processSheetBatch(tagList, message, config, false, true));
-            }
-        } catch (e) { console.error('❌ Error'); }
-    });
+        if (!message.content.includes('<@')) {
+            const mentionString = tagList.map(p => `<@${p.id}>`).join(' ');
+
+            // ✅ เพิ่มรองรับรูป (สูงสุด 2 รูป)
+            const files = Array.from(message.attachments.values()).slice(0, 2);
+
+            const botMsg = await message.channel.send({
+                content: `📝 **บันทึก:** ${mentionString}`,
+                files: files.map(f => f.url)
+            });
+
+            const log = loadLog();
+            log[botMsg.id] = tagList;
+            saveLog(log);
+
+            await addQueue(() => processSheetBatch(tagList, botMsg, config, false, true));
+
+            if (message.deletable) await message.delete().catch(() => {});
+        } else {
+            await message.react('✅').catch(() => {});
+            const log = loadLog();
+            if (log[message.id]) return;
+            log[message.id] = tagList;
+            saveLog(log);
+            await addQueue(() => processSheetBatch(tagList, message, config, false, true));
+        }
+    } catch (e) { console.error('❌ Error'); }
+});
 
     client.on('messageDelete', async (message) => {
         try {
@@ -79,12 +89,15 @@ async function initBot(client, config) {
             const oldIds = oldList.map(x => x.id);
             const newIds = newList.map(x => x.id);
 
-            const added = newList.filter(x => !oldIds.includes(x.id));
-            const removed = oldList.filter(x => !newIds.includes(x.id));
-            if (added.length === 0 && removed.length === 0) return;
-
             const oldFirst = oldList[0] || null;
             const newFirst = newList[0] || null;
+
+            const added = newList.filter(x => !oldIds.includes(x.id));
+            const removed = oldList.filter(x => !newIds.includes(x.id));
+
+            const firstChanged = oldFirst?.id !== newFirst?.id;
+
+            if (added.length === 0 && removed.length === 0 && !firstChanged) return;
 
             if (oldFirst?.id !== newFirst?.id) {
                 if (oldFirst) await addQueue(() => processSheetBatch([oldFirst], newM, config, true, true, true));
@@ -172,27 +185,26 @@ async function processSheetBatch(list, msg, config, isDel = false, incBonus = tr
                     let oldVal = parseInt(rows[rIdx][chInfo.idx] || '0');
                     let newVal = oldVal + amt;
                     rows[rIdx][chInfo.idx] = newVal.toString();
-                    console.log(`[${isDel ? '-' : '+'}] ${p.nickname} | ${chInfo.name}: ${oldVal} ➡️ ${newVal}`);
+                    console.log(`[${isDel ? '-' : '+'}] ${p.nickname} | ${chInfo.name}: ${oldVal} →  ${newVal}`);
                 }
                 
                 if (incBonus && p.id === list[0].id && (msg.channel.id === config.CHANNELS.KADEE || msg.channel.id === config.CHANNELS.CAR)) {
                     let oldBonus = parseInt(rows[rIdx][4] || '0');
                     let newBonus = oldBonus + amt;
                     rows[rIdx][4] = newBonus.toString();
-                    console.log(`Bonus ${isDel ? 'ลด' : 'เพิ่ม'}: ${p.nickname} ${oldBonus} ➡️ ${newBonus}`);
+                    console.log(`Bonus ${isDel ? 'ลด' : 'เพิ่ม'}: ${p.nickname} ${oldBonus} →  ${newBonus}`);
                 }
             } else if (!isDel) {
                 const newR = [p.nickname, '', '0','0','0','0','0'];
                 if (!onlyBonus) newR[chInfo.idx] = '1';
                 if (incBonus && p.id === list[0].id && (msg.channel.id === config.CHANNELS.KADEE || msg.channel.id === config.CHANNELS.CAR)) newR[4] = '1';
                 rows.push(newR);
-                console.log(`[+] ${p.nickname} (คนใหม่) | ${chInfo.name}: 0 ➡️ 1`);
-                if (newR[4] === '1') console.log(`Bonus เพิ่ม: ${p.nickname} 0 ➡️ 1`);
+                console.log(`[+] ${p.nickname} (คนใหม่) | ${chInfo.name}: 0 →  1`);
+                if (newR[4] === '1') console.log(`Bonus เพิ่ม: ${p.nickname} 0 →  1`);
             }
         }
 
         await sheets.spreadsheets.values.update({ spreadsheetId: config.SPREADSHEET_ID, range: `${config.SHEET_NAME}!A1`, valueInputOption: 'USER_ENTERED', resource: { values: rows } });
-        console.log(`✅ อัปเดตสำเร็จ`);
 
     } catch (e) { console.error('❌ API Error'); }
 }
