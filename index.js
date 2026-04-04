@@ -200,14 +200,18 @@ http.createServer((req, res) => {
 /* =====================================================
     🌐 SELF-PING (กระตุ้นตัวเองทุก 10 นาที)
 ===================================================== */
-const APP_URL = process.env.APP_URL; 
+/* =====================================================
+    🌐 SELF-PING (ใช้ตัวแปรอัตโนมัติจาก Render)
+===================================================== */
+
+const APP_URL = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
 
 setInterval(() => {
     https.get(APP_URL, (res) => {
-        console.log(`🌐 [${new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' })}] Self-Ping: สถานะการตอบกลับ ${res.statusCode}`);
+        console.log(`🌐 [${new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' })}] Self-Ping: สถานะ ${res.statusCode}`);
     }).on('error', (err) => {
         console.error(`❌ Self-Ping Error: ${err.message}`);
     });
-}, 5 * 60 * 1000); 
+}, 5 * 60 * 1000);
 
 startApp();
